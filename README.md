@@ -5,5 +5,6 @@
 3. Постройте граф: `python -m src.graph build data/raw/20261101.as-rel2.txt --out data/processed`.
 4. Проверьте: `python -m src.graph inspect --dir data/processed`.
 5. Тесты: `python -m unittest discover -s tests -v`.
+6. Для HTML визуализации `python -m src.graph_neighbors --as 42385 --depth 1 --edge-cutoff 100 --static`
 
 Описание выбора формата и структуры файлов — в [HANDOFF.md](HANDOFF.md).
