@@ -19,7 +19,6 @@ from __future__ import annotations
 import argparse
 import json
 import logging
-import math
 import time
 from collections import deque
 from pathlib import Path
@@ -185,28 +184,6 @@ def bfs_tree(
     return edges, levels, truncated
 
 
-def static_layout(levels: dict[int, int]) -> dict[int, tuple[float, float]]:
-    """Arrange BFS levels on concentric rings without running JS physics."""
-    groups: dict[int, list[int]] = {}
-    for asn, depth in levels.items():
-        groups.setdefault(depth, []).append(asn)
-
-    positions: dict[int, tuple[float, float]] = {}
-    for depth, group in sorted(groups.items()):
-        # Increase radius with node count to avoid excessive overlap.
-        radius = max(160 * depth, len(group) * 18 / (2 * math.pi))
-        if depth == 0 and len(group) == 1:
-            positions[group[0]] = (0.0, 0.0)
-            continue
-        for i, asn in enumerate(sorted(group)):
-            angle = 2 * math.pi * i / len(group) + depth * 0.35
-            positions[asn] = (
-                round(radius * math.cos(angle), 2),
-                round(radius * math.sin(angle), 2),
-            )
-    return positions
-
-
 def render_html(
     edges: list[tuple[int, int, str]],
     levels: dict[int, int],
@@ -224,25 +201,32 @@ def render_html(
         cdn_resources="in_line",
     )
 
-    if static:
-        net.set_options("""{
-            "physics": {"enabled": false},
-            "interaction": {"hover": true, "navigationButtons": true}
-        }""")
-        positions = static_layout(levels)
-    else:
-        net.set_options("""{
-            "physics": {
-                "barnesHut": {
-                    "theta": 0.9,
-                    "gravitationalConstant": -5000,
-                    "centralGravity": 0.05,
-                    "springLength": 50
-                }
-            },
-            "interaction": {"hover": true, "navigationButtons": true}
-        }""")
-        positions = {}
+    # Let vis-network arrange the BFS discovery tree from top to bottom.
+    # The levels come directly from BFS; no manual coordinates are needed.
+    options = {
+        "layout": {
+            "hierarchical": {
+                "enabled": True,
+                "direction": "UD",
+                "sortMethod": "directed",
+                "levelSeparation": 150,
+                "nodeSpacing": 180,
+                "treeSpacing": 220,
+                "blockShifting": True,
+                "edgeMinimization": True,
+                "parentCentralization": True,
+            }
+        },
+        "physics": {"enabled": not static},
+        "edges": {"smooth": False},
+        "interaction": {"hover": True, "navigationButtons": True},
+    }
+    if not static:
+        options["physics"].update({
+            "solver": "hierarchicalRepulsion",
+            "hierarchicalRepulsion": {"nodeDistance": 180},
+        })
+    net.set_options(json.dumps(options))
 
     root_set = set(seed_asns)
     for asn in sorted(levels):
@@ -252,10 +236,8 @@ def render_html(
             "title": f"AS{asn}, depth={levels[asn]}",
             "color": NODE_SEED_COLOR if is_root else NODE_OTHER_COLOR,
             "size": 18 if is_root else 8,
+            "level": levels[asn],
         }
-        if static:
-            x, y = positions[asn]
-            options.update(x=x, y=y, fixed=True)
         net.add_node(str(asn), **options)
 
     for parent, child, edge_type in edges:
@@ -294,7 +276,7 @@ def main() -> None:
     parser.add_argument("--max-nodes", type=int, default=2000,
                         help="Maximum AS in tree (default: 2000; 0 = no limit)")
     parser.add_argument("--static", action="store_true",
-                        help="Use static concentric rings, without physics")
+                        help="Show a top-down hierarchical tree without physics")
     parser.add_argument("--verbose", action="store_true",
                         help="Verbose logs")
     parser.add_argument("--quiet", action="store_true",
