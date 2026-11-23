@@ -184,6 +184,46 @@ def bfs_tree(
     return edges, levels, truncated
 
 
+def add_edge_focus(html_path: Path) -> None:
+    """Show only the clicked AS's incident edges; click empty space to reset."""
+    # Change only edge colors, not graph topology. The hierarchical layout
+    # therefore remains stable when switching between focused and full views.
+    javascript = r"""
+    <script>
+    (function () {
+        const originalEdges = edges.get().map(edge => ({
+            id: edge.id,
+            from: String(edge.from),
+            to: String(edge.to),
+            color: typeof edge.color === "string"
+                ? edge.color : (edge.color && edge.color.color) || "#848484"
+        }));
+        let focusedNode = null;
+
+        network.on("click", function (params) {
+            const clickedNode = params.nodes.length ? String(params.nodes[0]) : null;
+            focusedNode = clickedNode === focusedNode ? null : clickedNode;
+
+            edges.update(originalEdges.map(edge => ({
+                id: edge.id,
+                color: {
+                    color: edge.color,
+                    highlight: edge.color,
+                    hover: edge.color,
+                    opacity: focusedNode === null || edge.from === focusedNode || edge.to === focusedNode
+                        ? 1 : 0
+                }
+            })));
+        });
+    })();
+    </script>
+    """
+    html = html_path.read_text(encoding="utf-8")
+    if "</body>" not in html:
+        raise ValueError("PyVis HTML does not contain </body>")
+    html_path.write_text(html.replace("</body>", javascript + "\n</body>", 1), encoding="utf-8")
+
+
 def render_html(
     edges: list[tuple[int, int, str]],
     levels: dict[int, int],
@@ -251,6 +291,7 @@ def render_html(
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
     net.write_html(str(out_path), notebook=False, open_browser=False)
+    add_edge_focus(out_path)
     log.info("HTML saved: %s (%.1f KiB)", out_path,
              out_path.stat().st_size / 1024)
 
