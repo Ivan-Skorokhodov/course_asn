@@ -300,8 +300,9 @@ def static_layout(levels: np.ndarray, node_ids: list, seed_asns: list) -> dict:
 
 def render_html(edges, seed_asns, out_path: Path,
                 static: bool = False, levels: np.ndarray | None = None) -> None:
+    node_asns_count = len({a for a, b, _ in edges} | {b for a, b, _ in edges})
     log.info("Rendering HTML: %d nodes, %d edges (static=%s)",
-             len(edges) * 2, len(edges), static)
+             node_asns_count, len(edges), static)
     # cdn_resources="in_line": vis.js + bindings + данные вшиваются в один файл.
     # Не зависит от расположения lib/ рядом с HTML и от сети в браузере.
     net = Network(
