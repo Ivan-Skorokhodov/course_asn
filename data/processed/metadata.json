@@ -1,0 +1,24 @@
+{
+  "input_filename": "20261101.as-rel2.txt",
+  "input_sha256": "8b3536d5b935587d2db931e9a65aa908cca17c22ce0bba93a90debfa864043c9",
+  "built_at_utc": "2026-11-11T20:37:52.741936+00:00",
+  "format": "csr_aligned_v1",
+  "n_vertices": 81623,
+  "n_directed_arcs": 1360356,
+  "n_unique_as_relationships": 680178,
+  "input_rows": {
+    "provider_customer_rows": 171391,
+    "peer_rows": 508787
+  },
+  "directed_arc_types": {
+    "upstream": 171391,
+    "downstream": 171391,
+    "peer": 1017574
+  },
+  "type_codes": {
+    "upstream": 1,
+    "downstream": 2,
+    "peer": 3
+  },
+  "note": "Peer/source provenance column is not stored; types aligned with CSR indices."
+}

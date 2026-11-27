@@ -4,8 +4,13 @@ __pycache__/
 data/raw/*
 data/processed/*
 data/filtered/*
+data/pruned/*
+
 !data/raw/.gitkeep
 !data/processed/.gitkeep
 !data/filtered/.gitkeep
-out/
-asn-2026-11-26
+!data/pruned/.gitkeep
+
+!data/processed/metadata.json
+!data/filtered/metadata.json
+!data/pruned/metadata.json
