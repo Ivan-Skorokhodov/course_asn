@@ -1,162 +1,113 @@
-# CAIDA AS-граф: иерархия Интернета и точки подключения DNS-anycast
+# CAIDA AS Relationships → CSR
 
-Проект исследует структуру Интернета на уровне автономных систем (AS) и готовит кандидатов для будущей оптимизации точек подключения авторитативного DNS-anycast с помощью ACO.
+Минимальный проект для **загрузки полного снимка CAIDA AS Relationships serial-2** и сохранения графа автономных систем (AS) в формате CSR (`SciPy`). На текущем этапе проект **не** содержит анализа AS Rank, PeeringDB/IXP, сокращённых подграфов, визуализаций или оптимизации ACO.
 
-**Важно:** выбранная ASN — потенциальная **сетевая точка подключения**, а не автоматически отдельный DNS-сервер или конкретный город. Полный CSR используется для маршрутов; BFS-дерево — только для изучения топологии.
+## Состав проекта
 
-## 1. Подготовка окружения
-
-Команды выполняются **из корня репозитория**:
-
-```bash
-source .venv/bin/activate
-python -m pip install -r requirements.txt
-python -m unittest discover -s tests -v
+```text
+.
+├── README.md
+├── HANDOFF.md
+├── requirements.txt
+├── .gitignore
+├── src/
+│   ├── __init__.py
+│   └── graph.py
+├── tests/
+│   └── test_graph.py
+└── data/
+    ├── raw/
+    │   ├── .gitkeep
+    │   └── 20261101.as-rel2.txt.gz       # локально, в Git не хранится
+    └── processed/
+        ├── .gitkeep
+        ├── graph.npz                 # создаётся командой build
+        ├── edge_types.npy
+        ├── asn_ids.npy
+        └── metadata.json
 ```
 
-Если `.venv` ещё не создано: `python3 -m venv .venv`.
+Имя входного файла приведено для используемого ранее снимка: подставьте фактическое имя своего `*.as-rel2.txt` или `*.as-rel2.txt.gz`.
 
-## 2. Построение полного графа (один раз для каждого снимка CAIDA)
+## Подготовка
 
-Положить исходный `*.as-rel2.txt` или `*.as-rel2.txt.gz` в `data/raw/`, затем:
+Все команды выполнять из корня проекта.
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install -r requirements.txt
+```
+
+Нужны только NumPy и SciPy. Тесты используют стандартный модуль `unittest`; дополнительные зависимости не требуются.
+
+## Получение и построение графа
+
+1. Получить нужный снимок из [CAIDA AS Relationships, serial-2](https://data.caida.org/datasets/as-relationships/serial-2/) с соблюдением условий использования CAIDA.
+2. Поместить скачанный `*.as-rel2.txt` либо `*.as-rel2.txt.gz` в `data/raw/`.
+3. Выполнить:
 
 ```bash
 python -m src.graph build data/raw/20261101.as-rel2.txt.gz --out data/processed
 python -m src.graph inspect --dir data/processed
 ```
 
-При необходимости заменить имя файла в команде на фактическое. Получаются `graph.npz`, `edge_types.npy`, `asn_ids.npy` и `metadata.json` в `data/processed/`. Если снимок уже обработан, повторно строить CSR не нужно.
+`build` парсит **полный** входной файл; фильтрация ASN и построение AS Rank-подграфов не выполняются. `inspect` загружает сохранённые массивы, проверяет их размерности и показывает число вершин и дуг.
 
-## 3. Полный цикл аналитики: три CSV
-
-Выполнять **в указанном порядке**.
-
-### Шаг 1. Метрики AS и дополнение CAIDA AS Rank
+Проверка кода:
 
 ```bash
-python -m src.as_analysis metrics --asrank-top 500
+python -m unittest discover -s tests -v
 ```
 
-Создаёт `data/analysis/as_metrics.csv`: прямых клиентов, провайдеров и peers для всех AS. Для AS, совпавших с топ-500 CAIDA AS Rank, дополнительно заполняются рейтинг и Customer Cone. **Без интернета** можно выполнить `python -m src.as_analysis metrics`, но поля AS Rank останутся пустыми, а при отборе будут использоваться прямые клиенты вместо Customer Cone.
+Если в текущем терминале не виден стандартный вывод, к командам можно временно добавить `1>&2`.
 
-### Шаг 2. Первоначальные кандидаты без географии
+## Как устроен формат CSR
 
-```bash
-python -m src.as_analysis candidates --large 40 --middle 80 --peering 80
-```
+Строки входного файла serial-2 имеют поля `asn1|asn2|relationship|source`. Парсер использует первые три поля, а `source` пока не сохраняет.
 
-Создаёт `data/analysis/candidates.csv` из трёх **пересекающихся** групп. Сумма 40 + 80 + 80 не обязана равняться количеству уникальных ASN.
+| Входное отношение CAIDA | Дуги в нашем CSR | Код в `edge_types.npy` |
+|---|---|---|
+| `provider|customer|-1|source` | provider → customer | `DOWNSTREAM = 2` |
+| то же отношение (обратная дуга) | customer → provider | `UPSTREAM = 1` |
+| `peer1|peer2|0|source` | peer1 → peer2 и peer2 → peer1 | `PEER = 3` |
 
-### Шаг 3. Получить географические сведения PeeringDB
+Одна связь между двумя ASN представляется **двумя направленными дугами**. Повторяющиеся идентичные дуги удаляются; конфликтующие типы для одной направленной пары приводят к ошибке.
 
-```bash
-python -m src.peeringdb_sites --timeout 15 --retries 2
-```
+Получаемые файлы:
 
-Создаёт `data/analysis/asn_sites.csv`. Данные берутся **для ASN из текущего `candidates.csv`**. Ответы API кэшируются в `data/analysis/.cache/peeringdb/`. Время выполнения зависит от числа ASN и API; повторный запуск обычно использует кэш.
-
-Для проверки на пяти ASN **не перезаписывать основной результат**:
-
-```bash
-python -m src.peeringdb_sites --limit-asns 5 --out data/analysis/asn_sites_sample.csv
-```
-
-Для принудительного обновления запросов: `python -m src.peeringdb_sites --refresh`. Параметры `--timeout`, `--retries`, `--limit-asns` поддерживаются исправленной версией `src/peeringdb_sites.py`.
-
-### Шаг 4. Повторно собрать кандидатов с географией
-
-```bash
-python -m src.as_analysis candidates \
-  --large 40 --middle 80 --peering 80 \
-  --sites data/analysis/asn_sites.csv
-```
-
-**Итоговые файлы:**
-
-| CSV | Содержимое |
+| Файл | Назначение |
 |---|---|
-| `data/analysis/as_metrics.csv` | Все AS из CSR и их топологические показатели; частично CAIDA AS Rank |
-| `data/analysis/asn_sites.csv` | Заявленное присутствие кандидатов в facilities и IX |
-| `data/analysis/candidates.csv` | Отобранные уникальные AS, группы, топологические метрики и географическая сводка |
+| `graph.npz` | Разреженная матрица смежности CSR: дуга обозначается единицей |
+| `edge_types.npy` | Тип каждой дуги **в точном порядке** массива `graph.indices` |
+| `asn_ids.npy` | Отсортированные реальные ASN; индекс массива = индекс вершины CSR |
+| `metadata.json` | Имя и SHA-256 входного файла, статистика графа, формат `csr_aligned_v1` |
 
-На **23.11.2026**, по результатам локального запуска: **184 кандидата, 11 441 запись PeeringDB**. Число записей — не число уникальных городов и не число DNS-серверов. При изменении параметров отбора эти значения изменятся.
+`graph.npz` **не** содержит измеренных задержек, пропускных способностей и реальных BGP-путей. Значение `1` означает наличие дуги, а не физическую стоимость маршрута.
 
-## 4. Что изучить после получения CSV
+## Контрольные числа для использованного снимка
 
-### Быстрый просмотр файлов
+По ранее выполненному локальному построению `20261101.as-rel2.txt.gz`:
 
-```bash
-head -n 3 data/analysis/as_metrics.csv
-head -n 3 data/analysis/candidates.csv
-head -n 3 data/analysis/asn_sites.csv
-```
+| Показатель | Значение |
+|---|---:|
+| Вершины (AS) | 81 623 |
+| Направленные дуги CSR | 1 360 356 |
+| Уникальные AS-отношения | 680 178 |
+| Provider–customer отношения | 171 391 |
+| Peering отношения | 508 787 |
+| Дуги `upstream` | 171 391 |
+| Дуги `downstream` | 171 391 |
+| Дуги `peer` | 1 017 574 |
 
-Показать первые 15 кандидатов по официальному AS Rank (если поля заполнены):
+Это **результаты конкретного снимка**, не инвариант CAIDA. После сборки сравнивайте вывод `build` и `inspect` со своим `metadata.json`.
 
-```bash
-python - 1>&2 <<'PY'
-import csv
+## Ограничения данных
 
-with open('data/analysis/candidates.csv', newline='', encoding='utf-8') as f:
-    rows = list(csv.DictReader(f))
+- CAIDA восстанавливает AS-отношения из доступных измерений; это **не полный перечень всех физических или коммерческих связей**.
+- Одной паре AS присваивается один тип отношений; реальные политики могут различаться по точкам подключения, префиксам и времени.
+- `bgp` означает связь, выведенную из наблюдаемых BGP-путей, `mlp` — peering, выведенный с применением сведений об IX route servers. Участие в одном IX само по себе **не означает** двустороннего peering. Исходное поле `source` наш CSR не сохраняет.
+- В serial-2 также есть исторический контекст Ark traceroute; новые Ark-выводы прекратили добавлять в сентябре 2018 года. Не следует считать их актуальными измерениями снимка 2026 года.
+- Связность в AS-графе не гарантирует, что произвольный путь допустим политикой BGP. Географию PoP, RTT и трафик этот набор файлов не описывает.
 
-rows = [r for r in rows if r['asrank_rank'].strip()]
-rows.sort(key=lambda r: int(r['asrank_rank']))
-
-if not rows:
-    print("Нет данных AS Rank в candidates.csv")
-
-for r in rows[:15]:
-    print(f"AS{r['asn']:>8}  rank={r['asrank_rank']:>5}  "
-          f"cone={r['asrank_cone_asns']:>7}  "
-          f"facilities={r['facility_count']:>4}  IX={r['ix_count']:>4}  "
-          f"groups={r['groups']}")
-PY
-```
-
-Показать первые 15 кандидатов по количеству peer-связей:
-
-```bash
-python - 1>&2 <<'PY'
-import csv
-
-with open('data/analysis/candidates.csv', newline='', encoding='utf-8') as f:
-    rows = list(csv.DictReader(f))
-
-rows.sort(key=lambda r: (-int(r['peer_degree']), int(r['asn'])))
-
-for r in rows[:15]:
-    print(f"AS{r['asn']:>8}  peers={r['peer_degree']:>5}  "
-          f"customers={r['customer_degree']:>5}  "
-          f"facilities={r['facility_count']:>4}  "
-          f"countries={r['facility_countries']}")
-PY
-```
-
-Для сравнения географии использовать прежде всего `facility_countries` и `facility_cities`: город IX не гарантирует физическое присутствие оборудования AS в этом городе (возможен remote peering).
-
-### Исследовать иерархию provider → customer
-
-```bash
-python -m src.as_analysis hierarchy --as 3356 --depth 2 --max-nodes 60
-```
-
-Можно заменить `3356` на любую ASN из `candidates.csv`. Это **дерево обнаружения** по отношениям provider → customer, а не полный BGP Customer Cone.
-
-### Посмотреть окрестность AS в браузере
-
-```bash
-python -m src.graph_neighbors --as 3356 --depth 2 --edge-cutoff 0 --max-nodes 300 --static
-```
-
-Открыть `out/as_neighbors.html`. Для исследования структуры удобен `--edge-cutoff 0`; фильтр `--edge-cutoff` отсекает связи **в ходе BFS**, поэтому может убирать целые ветви. Он не используется при расчёте маршрутов для ACO.
-
-## 5. Следующий этап курсовой
-
-1. Сопоставить AS с большим **Customer Cone** и большим `peer_degree`; изучить их иерархии и географию.
-2. Оценить покрытие данных PeeringDB: не у каждой ASN обязательно есть запись; `facility` и `ix` трактовать раздельно.
-3. Зафиксировать `S` (источники DNS-запросов), `D` (существующие точки подключения DNS), `q_s` (веса), `C` (допустимые AS-кандидаты), `k` и `α`.
-4. На **полном** CSR посчитать маршрутные стоимости и выигрыш от подключения; затем реализовать Greedy и ACO с сохранением рейтинга **комбинаций** из `k` AS.
-5. Для лучших комбинаций проверить географическое разнообразие и практическую реализуемость по PeeringDB. География пока **не влияет** на стоимость AS-level пути напрямую.
-
-Архитектура, модель и ограничения — в [HANDOFF.md](HANDOFF.md).
+Подробные технические решения и ограничения приведены в [HANDOFF.md](HANDOFF.md).
